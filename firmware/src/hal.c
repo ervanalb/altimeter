@@ -1,5 +1,6 @@
-#include "hal.h"
 #include "stm32f0xx.h"
+#include "hal.h"
+#include "barometer.h"
 
 // Bring up all hardware
 void init()
@@ -8,8 +9,10 @@ void init()
     TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStruct;
     TIM_OCInitTypeDef TIM_OCInitStruct;
     USART_InitTypeDef USART_InitStruct;
+    I2C_InitTypeDef I2C_InitStruct;
 
-    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA | RCC_AHBPeriph_GPIOB, ENABLE);
+    RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA | RCC_AHBPeriph_GPIOB | RCC_AHBPeriph_GPIOF, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1, ENABLE);
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM16 | RCC_APB2Periph_USART1, ENABLE);
 
     // PWR_HOLD
@@ -97,6 +100,28 @@ void init()
     USART_InitStruct.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
     USART_Init(USART1, &USART_InitStruct);
     USART_Cmd(USART1, ENABLE);
+
+    // Barometer
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+    GPIO_InitStruct.GPIO_OType = GPIO_OType_OD;
+    GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_1;
+    GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+    GPIO_PinAFConfig(GPIOF, GPIO_PinSource0, GPIO_AF_1);
+    GPIO_PinAFConfig(GPIOF, GPIO_PinSource1, GPIO_AF_1);
+
+    I2C_InitStruct.I2C_Timing = 0x50330309; // How's that for magic constants
+    I2C_InitStruct.I2C_AnalogFilter = I2C_AnalogFilter_Enable;
+    I2C_InitStruct.I2C_DigitalFilter = 0;
+    I2C_InitStruct.I2C_Mode = I2C_Mode_I2C;
+    I2C_InitStruct.I2C_OwnAddress1 = 0;
+    I2C_InitStruct.I2C_Ack = I2C_Ack_Enable;
+    I2C_InitStruct.I2C_AcknowledgedAddress = I2C_AcknowledgedAddress_7bit;
+    I2C_Init(I2C1, &I2C_InitStruct);
+
+    I2C_Cmd(I2C1, ENABLE);
 }
 
 void leds(uint8_t colors)
@@ -165,4 +190,90 @@ void putchar(uint8_t c)
 {
     USART1->TDR = c;
     while(!USART_GetFlagStatus(USART1, USART_FLAG_TXE));
+}
+
+int i2c_read(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t n_bytes)
+{
+    __IO uint32_t timeout;
+
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_SoftEnd_Mode, I2C_Generate_Start_Write);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXIS))
+    {
+        if(!(timeout--)) return -1;
+    }
+
+    I2C_SendData(I2C1, reg_address);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TC))
+    {
+        if(!(timeout--)) return -2;
+    } 
+
+    I2C_TransferHandling(I2C1, i2c_address, n_bytes, I2C_AutoEnd_Mode, I2C_Generate_Start_Read);
+
+    while(n_bytes--)
+    {
+        timeout = I2C_TIMEOUT;
+        while(I2C_GetFlagStatus(I2C1, I2C_ISR_RXNE) == RESET)    
+        {
+            if(!(timeout--)) return -3;
+        }
+
+        *data++ = I2C_ReceiveData(I2C1);
+    }    
+
+    timeout = I2C_TIMEOUT;
+    while(I2C_GetFlagStatus(I2C1, I2C_ISR_STOPF) == RESET)   
+    {
+        if(!(timeout--)) return -4;
+    }
+
+    I2C_ClearFlag(I2C1, I2C_ICR_STOPCF);
+    return 0;
+}
+
+int i2c_write(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t n_bytes)
+{
+    __IO uint32_t timeout;
+
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_SoftEnd_Mode, I2C_Generate_Start_Write);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXIS))
+    {
+        if(!(timeout--)) return -1;
+    }
+
+    I2C_SendData(I2C1, reg_address);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TC))
+    {
+        if(!(timeout--)) return -2;
+    } 
+
+    I2C_TransferHandling(I2C1, i2c_address, n_bytes, I2C_AutoEnd_Mode, I2C_Generate_Start_Write);
+
+    while(n_bytes--)
+    {
+        timeout = I2C_TIMEOUT;
+        while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXE))    
+        {
+            if(!(timeout--)) return -3;
+        }
+
+        I2C_SendData(I2C1, *data++);
+    }    
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_STOPF))
+    {
+        if(!(timeout--)) return -4;
+    }
+
+    I2C_ClearFlag(I2C1, I2C_ICR_STOPCF);
+    return 0;
 }

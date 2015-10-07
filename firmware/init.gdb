@@ -1,3 +1,3 @@
-tar ext /dev/ttyACM0
+tar ext /dev/ttyBMP
 mon swdp_scan
 attach 1

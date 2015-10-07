@@ -7,7 +7,20 @@ static void charge_leds()
     leds(charging() ? 0xFF : 0xAA);
 }
 
-static int a;
+static void turn_on()
+{
+    if(init_barometer()) for(;;);
+    leds(0x55);
+    on();
+    state = ON;
+}
+
+static void turn_off()
+{
+    tone(0);
+    off();
+    state = OFF;
+}
 
 int main()
 {
@@ -38,18 +51,14 @@ int main()
             charge_leds();
             if(button())
             {
-                state = ON;
-                leds(0x55);
-                on();
+                turn_on();
                 while(button());
             }
             break;
         case ON:
             if(button())
             {
-                state = OFF;
-                tone(0);
-                off();
+                turn_off();
                 while(button());
             }
             break;
