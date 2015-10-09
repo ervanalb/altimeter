@@ -12,8 +12,8 @@ void init()
     I2C_InitTypeDef I2C_InitStruct;
 
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA | RCC_AHBPeriph_GPIOB | RCC_AHBPeriph_GPIOF, ENABLE);
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1 | RCC_APB2Periph_SPI1, ENABLE);
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM16 | RCC_APB2Periph_USART1, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM16 | RCC_APB2Periph_USART1 | RCC_APB2Periph_SPI1, ENABLE);
 
     // PWR_HOLD
     GPIO_InitStruct.GPIO_Mode = GPIO_Mode_IN;
@@ -142,8 +142,9 @@ void init()
 
     GPIOA->BSRR = GPIO_Pin_15;
     GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
     GPIO_InitStruct.GPIO_Pin = GPIO_Pin_15;
-    GPIO_PinAFConfig(GPIOA, GPIO_PinSource15, GPIO_AF_0);
+    GPIO_Init(GPIOA, &GPIO_InitStruct);
 }
 
 void leds(uint8_t colors)
@@ -389,11 +390,13 @@ int i2c_write(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t 
 
 static void sd_set_cs_high()
 {
+    while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY));
     GPIOA->BSRR = GPIO_Pin_15;
 }
 
 static void sd_set_cs_low()
 {
+    while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY));
     GPIOA->BSRR = GPIO_Pin_15 << 16;
 }
 
@@ -406,18 +409,24 @@ static void sd_write_byte(uint8_t byte)
 
 static uint8_t sd_read_response()
 {
+    uint16_t timeout;
     uint8_t response;
+
+    while(SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_BSY));
     SPI_ReceiveData8(SPI1);
-    do
+
+    timeout = SD_TIMEOUT;
+    while(timeout--)
     {
         SPI_SendData8(SPI1, 0xFF);
         while(!SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE));
         response = SPI_ReceiveData8(SPI1);
-    } while(response == 0xFF);
+        if(response != 0xFF) break;
+    }
     return response;
 }
 
-void sd_init()
+int sd_init()
 {
     SPI_InitTypeDef SPI_InitStruct;
 
@@ -425,8 +434,9 @@ void sd_init()
     SPI_InitStruct.SPI_Direction = SPI_Direction_2Lines_FullDuplex;
     SPI_InitStruct.SPI_Mode = SPI_Mode_Master;
     SPI_InitStruct.SPI_DataSize = SPI_DataSize_8b;
-    SPI_InitStruct.SPI_CPOL = SPI_CPOL_Low;
-    SPI_InitStruct.SPI_CPHA = SPI_CPHA_1Edge;
+
+    SPI_InitStruct.SPI_CPOL = SPI_CPOL_High;
+    SPI_InitStruct.SPI_CPHA = SPI_CPHA_2Edge;
     SPI_InitStruct.SPI_NSS = SPI_NSS_Soft;
     SPI_InitStruct.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_128; // 375 KHz
     SPI_InitStruct.SPI_FirstBit = SPI_FirstBit_MSB;
@@ -447,15 +457,20 @@ void sd_init()
     sd_write_byte(0x00);
     sd_write_byte(0x00);
     sd_write_byte(0x00);
+    sd_write_byte(0x95);
 
     uint8_t r;
     r = sd_read_response();
 
     sd_set_cs_high();
 
+    if(r == 0xFF) return -1; // Timeout
+    if(r != 0x01) return -2; // Card error
+
     SPI_I2S_DeInit(SPI1);
     SPI_InitStruct.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_4; // 12 MHz
     SPI_Init(SPI1,&SPI_InitStruct);
     SPI_Cmd(SPI1, ENABLE);
 
+    return 0;
 }

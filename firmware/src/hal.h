@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define I2C_TIMEOUT 0x3FFF
+#define SD_TIMEOUT 0xFFF
 
 void init();
 void leds(uint8_t colors);

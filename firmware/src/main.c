@@ -11,7 +11,7 @@ static void turn_on()
 {
     if(init_barometer()) for(;;);
     //if(begin_alititude_measurement()) for(;;);
-    sd_init();
+    if(sd_init()) for(;;);
     leds(0x55);
     on();
     state = ON;
