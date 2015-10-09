@@ -23,9 +23,30 @@ int init_barometer()
     I2C_ClearFlag(I2C1, I2C_ICR_STOPCF);
 
     uint8_t id;
-    if(i2c_read(I2C_BAROMETER_ADDR, 0x0C, &id, sizeof(id))) return -3;
+    if(i2c_read_byte(I2C_BAROMETER_ADDR, 0x0C, &id)) return -3;
     if(id != 0xC4) return -4;
 
+    if(i2c_write_byte(I2C_BAROMETER_ADDR, 0x26, 0x88)) return -1; // Write to CTRL_REG1 OS=128
+    if(i2c_write_byte(I2C_BAROMETER_ADDR, 0x13, 0x07)) return -2; // Notify on new altitude data
+
+    return 0;
+}
+
+int begin_alititude_measurement()
+{
+    if(i2c_write_byte(I2C_BAROMETER_ADDR, 0x26, 0x8A)) return -1; // One-shot
+    return 0;
+}
+
+int get_altitude_measurement(int32_t* altitude)
+{
+    uint8_t status;
+    uint8_t result[3];
+    if(i2c_read_byte(I2C_BAROMETER_ADDR, 0x00, &status)) return -2;
+    if(!(status & 0x08)) return -1; // Data unavailable
+
+    if(i2c_read(I2C_BAROMETER_ADDR, 0x01, result, sizeof(result))) return -3;
+    *altitude = ((uint32_t)result[0] << 24) | ((uint32_t)result[1] << 16) | ((uint32_t)result[2] << 8);
     return 0;
 }
 

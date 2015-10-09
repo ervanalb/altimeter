@@ -12,7 +12,7 @@ void init()
     I2C_InitTypeDef I2C_InitStruct;
 
     RCC_AHBPeriphClockCmd(RCC_AHBPeriph_GPIOA | RCC_AHBPeriph_GPIOB | RCC_AHBPeriph_GPIOF, ENABLE);
-    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1 | RCC_APB2Periph_SPI1, ENABLE);
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_TIM16 | RCC_APB2Periph_USART1, ENABLE);
 
     // PWR_HOLD
@@ -122,6 +122,28 @@ void init()
     I2C_Init(I2C1, &I2C_InitStruct);
 
     I2C_Cmd(I2C1, ENABLE);
+
+    // SD Card
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+    GPIO_InitStruct.GPIO_OType = GPIO_OType_PP;
+    GPIO_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_3 |  GPIO_Pin_5;
+    GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_AF;
+    GPIO_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_4;
+    GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource3, GPIO_AF_0);
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource4, GPIO_AF_0);
+    GPIO_PinAFConfig(GPIOB, GPIO_PinSource5, GPIO_AF_0);
+
+    GPIOA->BSRR = GPIO_Pin_15;
+    GPIO_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
+    GPIO_InitStruct.GPIO_Pin = GPIO_Pin_15;
+    GPIO_PinAFConfig(GPIOA, GPIO_PinSource15, GPIO_AF_0);
 }
 
 void leds(uint8_t colors)
@@ -235,7 +257,7 @@ int i2c_read(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t n
     return 0;
 }
 
-int i2c_write(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t n_bytes)
+int i2c_read_byte(uint8_t i2c_address, uint8_t reg_address, uint8_t* byte)
 {
     __IO uint32_t timeout;
 
@@ -255,18 +277,56 @@ int i2c_write(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t 
         if(!(timeout--)) return -2;
     } 
 
-    I2C_TransferHandling(I2C1, i2c_address, n_bytes, I2C_AutoEnd_Mode, I2C_Generate_Start_Write);
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_AutoEnd_Mode, I2C_Generate_Start_Read);
 
-    while(n_bytes--)
+    timeout = I2C_TIMEOUT;
+    while(I2C_GetFlagStatus(I2C1, I2C_ISR_RXNE) == RESET)    
     {
-        timeout = I2C_TIMEOUT;
-        while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXE))    
-        {
-            if(!(timeout--)) return -3;
-        }
+        if(!(timeout--)) return -3;
+    }
 
-        I2C_SendData(I2C1, *data++);
-    }    
+    *byte = I2C_ReceiveData(I2C1);
+
+    timeout = I2C_TIMEOUT;
+    while(I2C_GetFlagStatus(I2C1, I2C_ISR_STOPF) == RESET)   
+    {
+        if(!(timeout--)) return -4;
+    }
+
+    I2C_ClearFlag(I2C1, I2C_ICR_STOPCF);
+    return 0;
+}
+
+
+int i2c_write_byte(uint8_t i2c_address, uint8_t reg_address, uint8_t byte)
+{
+    __IO uint32_t timeout;
+
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_Reload_Mode, I2C_Generate_Start_Write);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXIS))
+    {
+        if(!(timeout--)) return -1;
+    }
+
+    I2C_SendData(I2C1, reg_address);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TCR))
+    {
+        if(!(timeout--)) return -2;
+    }
+
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_AutoEnd_Mode, I2C_No_StartStop);
+
+    timeout = I2C_TIMEOUT;
+    while(I2C_GetFlagStatus(I2C1, I2C_ISR_TXIS))
+    {
+        if(!(timeout--)) return -3;
+    }
+
+    I2C_SendData(I2C1, byte);
 
     timeout = I2C_TIMEOUT;
     while(!I2C_GetFlagStatus(I2C1, I2C_ISR_STOPF))
@@ -276,4 +336,126 @@ int i2c_write(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t 
 
     I2C_ClearFlag(I2C1, I2C_ICR_STOPCF);
     return 0;
+}
+
+int i2c_write(uint8_t i2c_address, uint8_t reg_address, uint8_t* data, uint16_t n_bytes)
+{
+    __IO uint32_t timeout;
+
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_Reload_Mode, I2C_Generate_Start_Write);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXIS))
+    {
+        if(!(timeout--)) return -1;
+    }
+
+    I2C_SendData(I2C1, reg_address);
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TCR))
+    {
+        if(!(timeout--)) return -2;
+    } 
+
+    I2C_TransferHandling(I2C1, i2c_address, 1, I2C_AutoEnd_Mode, I2C_No_StartStop);
+
+    timeout = I2C_TIMEOUT;
+    while(I2C_GetFlagStatus(I2C1, I2C_ISR_TXIS))
+    {
+        if(!(timeout--)) return -3;
+    }
+
+    while(n_bytes--)
+    {
+        I2C_SendData(I2C1, *data++);
+
+        timeout = I2C_TIMEOUT;
+        while(!I2C_GetFlagStatus(I2C1, I2C_ISR_TXE))    
+        {
+            if(!(timeout--)) return -3;
+        }
+    }
+
+    timeout = I2C_TIMEOUT;
+    while(!I2C_GetFlagStatus(I2C1, I2C_ISR_STOPF))
+    {
+        if(!(timeout--)) return -4;
+    }
+
+    I2C_ClearFlag(I2C1, I2C_ICR_STOPCF);
+    return 0;
+}
+
+static void sd_set_cs_high()
+{
+    GPIOA->BSRR = GPIO_Pin_15;
+}
+
+static void sd_set_cs_low()
+{
+    GPIOA->BSRR = GPIO_Pin_15 << 16;
+}
+
+
+static void sd_write_byte(uint8_t byte)
+{
+    SPI_SendData8(SPI1, byte);
+    while(!SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_TXE));
+}
+
+static uint8_t sd_read_response()
+{
+    uint8_t response;
+    SPI_ReceiveData8(SPI1);
+    do
+    {
+        SPI_SendData8(SPI1, 0xFF);
+        while(!SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE));
+        response = SPI_ReceiveData8(SPI1);
+    } while(response == 0xFF);
+    return response;
+}
+
+void sd_init()
+{
+    SPI_InitTypeDef SPI_InitStruct;
+
+    SPI_I2S_DeInit(SPI1);
+    SPI_InitStruct.SPI_Direction = SPI_Direction_2Lines_FullDuplex;
+    SPI_InitStruct.SPI_Mode = SPI_Mode_Master;
+    SPI_InitStruct.SPI_DataSize = SPI_DataSize_8b;
+    SPI_InitStruct.SPI_CPOL = SPI_CPOL_Low;
+    SPI_InitStruct.SPI_CPHA = SPI_CPHA_1Edge;
+    SPI_InitStruct.SPI_NSS = SPI_NSS_Soft;
+    SPI_InitStruct.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_128; // 375 KHz
+    SPI_InitStruct.SPI_FirstBit = SPI_FirstBit_MSB;
+    SPI_InitStruct.SPI_CRCPolynomial = 7;
+    SPI_Init(SPI1,&SPI_InitStruct);
+    SPI_Cmd(SPI1, ENABLE);
+
+    // Leave CS high
+    for(int i = 0; i < 10; i++) // Apply 80 clock pulses
+    {
+        sd_write_byte(0xFF);
+    }
+
+    sd_set_cs_low();
+
+    sd_write_byte(0x40);
+    sd_write_byte(0x00);
+    sd_write_byte(0x00);
+    sd_write_byte(0x00);
+    sd_write_byte(0x00);
+
+    uint8_t r;
+    r = sd_read_response();
+
+    sd_set_cs_high();
+
+    SPI_I2S_DeInit(SPI1);
+    SPI_InitStruct.SPI_BaudRatePrescaler = SPI_BaudRatePrescaler_4; // 12 MHz
+    SPI_Init(SPI1,&SPI_InitStruct);
+    SPI_Cmd(SPI1, ENABLE);
+
 }

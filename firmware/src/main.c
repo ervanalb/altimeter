@@ -10,6 +10,8 @@ static void charge_leds()
 static void turn_on()
 {
     if(init_barometer()) for(;;);
+    //if(begin_alititude_measurement()) for(;;);
+    sd_init();
     leds(0x55);
     on();
     state = ON;
@@ -20,6 +22,19 @@ static void turn_off()
     tone(0);
     off();
     state = OFF;
+}
+
+static void try_read_altitude()
+{
+    int r;
+    int32_t altitude;
+    int32_t t;
+    //r = get_altitude_measurement(&altitude);
+    //if(r == -1) return;
+    //if(r) for(;;);
+    //if(begin_alititude_measurement()) for(;;);
+    //t = ((10 * 65536) - altitude) / 500;
+    //tone(t);
 }
 
 int main()
@@ -56,6 +71,7 @@ int main()
             }
             break;
         case ON:
+            try_read_altitude();
             if(button())
             {
                 turn_off();
